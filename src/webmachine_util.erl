@@ -515,11 +515,11 @@ guess_mime_test() ->
                 ".gz",".tar",".tgz"],
     ImgTypes = [".jpg",".jpeg",".gif",".png",".ico",".svg"],
     ?assertEqual([], [ T || T <- TextTypes,
-                            1 /= string:str(guess_mime(T),"text/") ]),
+                            1 /= string:str(guess_mime("file" ++ T),"text/") ]),
     ?assertEqual([], [ T || T <- AppTypes,
-                            1 /= string:str(guess_mime(T),"application/") ]),
+                            1 /= string:str(guess_mime("file" ++ T),"application/") ]),
     ?assertEqual([], [ T || T <- ImgTypes,
-                            1 /= string:str(guess_mime(T),"image/") ]).
+                            1 /= string:str(guess_mime("file" ++ T),"image/") ]).
 
 
 now_diff_milliseconds_test() ->

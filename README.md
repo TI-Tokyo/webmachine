@@ -8,7 +8,7 @@ contact [@seancribbs](http://github.com/seancribbs) to get involved.
 
 ### Overview
 
-[![Build Status](https://travis-ci.org/webmachine/webmachine.svg?branch=develop)](https://travis-ci.org/webmachine/webmachine)
+[![Erlang CI Actions Status](https://github.com/basho/webmachine/workflows/Erlang%20CI/badge.svg)](https://github.com/basho/webmachine/actions)
 
 Webmachine is an application layer that adds HTTP semantic awareness
 on top of the excellent bit-pushing and HTTP syntax-management
