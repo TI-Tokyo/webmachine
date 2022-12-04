@@ -76,7 +76,7 @@ stop(Name) ->
 
 -spec loop(mochiweb_request(), any()) -> ok.
 loop(MochiReq, Name) ->
-    case new_webmachine_req(MochiReq) of
+    case new_webmachine_req(MochiReq, Name) of
       {{error, NewRequestError}, ErrorReq} ->
         handle_error(500, {error, NewRequestError}, ErrorReq);
       Req ->
@@ -116,11 +116,17 @@ loop(MochiReq, Name) ->
                                 {module(),#wm_reqstate{}}
                                     |{{error, term()}, #wm_reqstate{}}.
 new_webmachine_req(Request) ->
+    new_webmachine_req(Request, undefined).
+
+-spec new_webmachine_req(mochiweb_request(), any()) ->
+                                {module(),#wm_reqstate{}}
+                                    |{{error, term()}, #wm_reqstate{}}.
+new_webmachine_req(Request, Name) ->
     Method = mochiweb_request:get(method, Request),
     Scheme = mochiweb_request:get(scheme, Request),
     Version = mochiweb_request:get(version, Request),
     {Headers, RawPath} =
-        case application:get_env(webmachine, rewrite_module) of
+        case get_rewrite_module(Name) of
             {ok, undefined} ->
                 {
               mochiweb_request:get(headers, Request),
@@ -168,6 +174,16 @@ new_webmachine_req(Request) ->
             webmachine_request:new(ReqState#wm_reqstate{log_data=LogData,
                                                         reqdata=ReqData})
         end
+    end.
+
+get_rewrite_module(Name) ->
+    logger:debug("get_rewrite_module ~p", [Name]),
+    InstanceRMs = application:get_env(webmachine_mochiweb, rewrite_modules, []),
+    case proplists:get_value(Name, InstanceRMs, undefined) of
+        undefined ->
+            {ok, application:get_env(webmachine_mochiweb, rewrite_module)};
+        Defined ->
+            {ok, Defined}
     end.
 
 do_rewrite(RewriteMod, Method, Scheme, Version, Headers, RawPath) ->
