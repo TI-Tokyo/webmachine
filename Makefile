@@ -1,11 +1,22 @@
-REBAR3 ?= ./rebar3
+.PHONY: compile eunit xref dialyzer
+REBAR=./rebar3
 
+compile:
+	$(REBAR) compile
 
-all:
-	@$(REBAR3) compile
+clean:
+	$(REBAR) clean
 
 distclean:
-	@rm -rf ./_build
+	$(REBAR) clean -a
 
-edoc:
-	@$(REBAR3) edoc
+eunit:
+	$(REBAR) eunit
+
+dialyzer:
+	$(REBAR) dialyzer
+
+xref:
+	$(REBAR) xref
+
+check: eunit dialyzer xref
