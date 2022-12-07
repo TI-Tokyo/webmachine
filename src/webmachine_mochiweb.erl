@@ -177,7 +177,6 @@ new_webmachine_req(Request, Name) ->
     end.
 
 get_rewrite_module(Name) ->
-    logger:debug("get_rewrite_module ~p", [Name]),
     InstanceRMs = application:get_env(webmachine_mochiweb, rewrite_modules, []),
     case proplists:get_value(Name, InstanceRMs, undefined) of
         undefined ->
