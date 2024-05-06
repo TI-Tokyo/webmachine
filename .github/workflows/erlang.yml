@@ -29,4 +29,4 @@ jobs:
       - name: Compile
         run: make compile
       - name: Run QA
-        run: make checks
+        run: make check
