@@ -119,7 +119,7 @@ new_webmachine_req(Request) ->
     new_webmachine_req(Request, undefined).
 
 -spec new_webmachine_req(mochiweb_request(), any()) ->
-                                {module(),#wm_reqstate{}}
+                                #wm_reqstate{}
                                     |{{error, term()}, #wm_reqstate{}}.
 new_webmachine_req(Request, Name) ->
     Method = mochiweb_request:get(method, Request),
