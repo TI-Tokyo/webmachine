@@ -30,12 +30,6 @@
 
 -define(CALLBACK_ARITY, 2).
 
-%% Suppress Erlang/OTP 21 warnings about the new method to retrieve
-%% stacktraces.
--ifdef(OTP_RELEASE).
--compile({nowarn_deprecated_function, [{erlang, get_stacktrace, 0}]}).
--endif.
-
 new(R_Mod, R_ModState, R_Trace) ->
     case erlang:module_loaded(R_Mod) of
         false -> code:ensure_loaded(R_Mod);
@@ -210,7 +204,11 @@ resource_call(F, ReqData,
     Result = try
         %% Note: the argument list must match the definition of CALLBACK_ARITY
         apply(R_Mod, F, [ReqData, R_ModState])
-    catch ?STPATTERN(C:R) ->
+    catch
+        ?STPATTERN(throw:{webmachine_recv_error,_}=Error) ->
+            Location = find_call(R_Mod, F, ?STACKTRACE),
+            {{error, {throw, Error, Location}}, ReqData, R_ModState};
+        ?STPATTERN(C:R) ->
             Reason = {C, R, trim_trace(?STACKTRACE)},
             {{error, Reason}, ReqData, R_ModState}
     end,
@@ -219,6 +217,13 @@ resource_call(F, ReqData,
         _ -> log_call(R_Trace, result, R_Mod, F, Result)
     end,
     Result.
+
+find_call(Mod, Fun, [{Mod, Fun, ?CALLBACK_ARITY, _}=Call|_]) ->
+    Call;
+find_call(Mod, Fun, [_|Rest]) ->
+    find_call(Mod, Fun, Rest);
+find_call(Mod, Fun, []) ->
+    {Mod, Fun, ?CALLBACK_ARITY, []}.
 
 log_d(#wm_resource{}=Res, DecisionID) ->
     log_d(DecisionID, Res);

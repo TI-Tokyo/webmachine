@@ -23,6 +23,7 @@
 -include("webmachine_logger.hrl").
 -include("wm_reqstate.hrl").
 -include("wm_reqdata.hrl").
+-include("wm_compat.hrl").
 
 -type mochiweb_request() ::
         {
@@ -103,18 +104,17 @@ loop(MochiReq, Name) ->
                                   XReq1),
                     webmachine_decision_core:handle_request(Resource, RS2)
                 catch
-                    error:Error ->
-                        handle_error(500, {error, Error}, Req)
+                    ?STPATTERN(error:Error) ->
+                        handle_error(500, {error, Error, ?STACKTRACE}, Req)
                 end
         catch
-            Type : Error ->
-                handle_error(500, {Type, Error}, Req)
+            ?STPATTERN(Type : Error) ->
+                handle_error(500, {Type, Error, ?STACKTRACE}, Req)
         end
     end.
 
 -spec new_webmachine_req(mochiweb_request()) ->
-                                {module(),#wm_reqstate{}}
-                                    |{{error, term()}, #wm_reqstate{}}.
+          #wm_reqstate{} |{{error, term()}, #wm_reqstate{}}.
 new_webmachine_req(Request) ->
     new_webmachine_req(Request, undefined).
 
@@ -143,7 +143,7 @@ new_webmachine_req(Request, Name) ->
     Socket = mochiweb_request:get(socket, Request),
 
     InitialReqData = wrq:create(Method,Scheme,Version,RawPath,Headers),
-    InitialLogData = #wm_log_data{start_time=os:timestamp(),
+    InitialLogData = #wm_log_data{start_time=erlang:monotonic_time(),
                                   method=Method,
                                   headers=Headers,
                                   path=RawPath,
@@ -154,25 +154,23 @@ new_webmachine_req(Request, Name) ->
     InitState = #wm_reqstate{socket=Socket,
                              log_data=InitialLogData,
                              reqdata=InitialReqData},
-    InitReq = {webmachine_request,InitState},
 
-    case webmachine_request:get_peer(InitReq) of
+    case webmachine_request:get_peer(InitState) of
       {ErrorGetPeer = {error,_}, ErrorGetPeerReqState} ->
         % failed to get peer
-        { ErrorGetPeer, webmachine_request:new (ErrorGetPeerReqState) };
+        { ErrorGetPeer, ErrorGetPeerReqState };
       {Peer, _ReqState} ->
-        case webmachine_request:get_sock(InitReq) of
+        case webmachine_request:get_sock(InitState) of
           {ErrorGetSock = {error,_}, ErrorGetSockReqState} ->
             LogDataWithPeer = InitialLogData#wm_log_data {peer=Peer},
             ReqStateWithSockErr =
               ErrorGetSockReqState#wm_reqstate{log_data=LogDataWithPeer},
-            { ErrorGetSock, webmachine_request:new (ReqStateWithSockErr) };
+            { ErrorGetSock, ReqStateWithSockErr };
           {Sock, ReqState} ->
             ReqData = wrq:set_sock(Sock, wrq:set_peer(Peer, InitialReqData)),
             LogData =
               InitialLogData#wm_log_data {peer=Peer, sock=Sock},
-            webmachine_request:new(ReqState#wm_reqstate{log_data=LogData,
-                                                        reqdata=ReqData})
+            ReqState#wm_reqstate{log_data=LogData, reqdata=ReqData}
         end
     end.
 
@@ -195,13 +193,15 @@ do_rewrite(RewriteMod, Method, Scheme, Version, Headers, RawPath) ->
     end.
 
 handle_error(Code, Error, Req) ->
+    {ok, Req0} = webmachine_request:call({add_note, error, Error}, Req),
     {ok, ErrorHandler} = application:get_env(webmachine, error_handler),
     {ErrorHTML,Req1} =
-        ErrorHandler:render_error(Code, Req, Error),
+        ErrorHandler:render_error(Code, Req0, Error),
     {ok,Req2} = webmachine_request:append_to_response_body(ErrorHTML, Req1),
-    {ok,Req3} = webmachine_request:send_response(Code, Req2),
-    {LogData,_ReqState4} = webmachine_request:log_data(Req3),
-    spawn(webmachine_log, log_access, [LogData]),
+    {_Result,Req3} = webmachine_request:send_response(Code, Req2),
+    {Notes,Req4} = webmachine_request:call(notes, Req3),
+    {LogData,_ReqState5} = webmachine_request:log_data(Req4),
+    spawn(webmachine_log, log_access, [LogData#wm_log_data{notes=Notes}]),
     ok.
 
 get_wm_option(OptName, {WMOptions, OtherOptions}) ->

@@ -264,15 +264,15 @@ do_choose(Choices, Header, Default) ->
     DefaultOkay = case DefaultPrio of
         [] ->
             case StarPrio of
-                [0.0] -> no;
+                [SP] when SP == 0.0 -> no;
                 _ -> yes
             end;
-        [0.0] -> no;
+        [DP] when DP == 0.0 -> no;
         _ -> yes
     end,
     AnyOkay = case StarPrio of
         [] -> no;
-        [0.0] -> no;
+        [SP2] when SP2 == 0.0 -> no;
         _ -> yes
     end,
     do_choose(Default, DefaultOkay, AnyOkay, Choices, Accepted).
@@ -296,7 +296,7 @@ do_choose(Default, DefaultOkay, AnyOkay, Choices, []) ->
 do_choose(Default, DefaultOkay, AnyOkay, Choices, [AccPair|AccRest]) ->
     {Prio, Acc} = AccPair,
     case Prio of
-        0.0 ->
+        _ when Prio == 0.0 ->
             do_choose(Default, DefaultOkay, AnyOkay,
                             lists:delete(Acc, Choices), AccRest);
         _ ->
@@ -510,10 +510,10 @@ rfc1123_date_test() ->
                  rfc1123_date({{2013, 7, 11}, {4, 33, 19}})).
 
 guess_mime_test() ->
-    TextTypes = [".html",".css",".htc",".manifest",".txt"],
-    AppTypes = [".xhtml",".xml",".js",".swf",".zip",".bz2",
-                ".gz",".tar",".tgz"],
-    ImgTypes = [".jpg",".jpeg",".gif",".png",".ico",".svg"],
+    TextTypes = ["f.html","f.css","f.htc","f.manifest","f.txt"],
+    AppTypes = ["f.xhtml","f.xml","f.js","f.swf","f.zip","f.bz2",
+                "f.gz","f.tar","f.tgz"],
+    ImgTypes = ["f.jpg","f.jpeg","f.gif","f.png","f.ico","f.svg"],
     ?assertEqual([], [ T || T <- TextTypes,
                             1 /= string:str(guess_mime("file" ++ T),"text/") ]),
     ?assertEqual([], [ T || T <- AppTypes,

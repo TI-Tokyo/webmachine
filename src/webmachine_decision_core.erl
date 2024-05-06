@@ -25,14 +25,8 @@
 -include("webmachine_logger.hrl").
 -include("wm_compat.hrl").
 
-%% Suppress Erlang/OTP 21 warnings about the new method to retrieve
-%% stacktraces.
--ifdef(OTP_RELEASE).
--compile({nowarn_deprecated_function, [{erlang, get_stacktrace, 0}]}).
--endif.
-
 handle_request(Resource, ReqState) ->
-    _ = [erase(X) || X <- [decision, code, req_body, bytes_written, tmp_reqstate]],
+    _ = [erase(X) || X <- [decision, code, req_body, bytes_written, tmp_reqstate, webmachine_stream_progress, webmachine_sent_continue]],
     put(resource, Resource),
     put(reqstate, ReqState),
     try
@@ -44,8 +38,7 @@ handle_request(Resource, ReqState) ->
 
 wrcall(X) ->
     RS0 = get(reqstate),
-    Req = webmachine_request:new(RS0),
-    {Response, RS1} = webmachine_request:call(X, Req),
+    {Response, RS1} = webmachine_request:call(X, RS0),
     put(reqstate, RS1),
     Response.
 
@@ -65,36 +58,50 @@ d(DecisionID) ->
     log_decision(DecisionID),
     decision(DecisionID).
 
-respond(Code) when is_integer(Code) ->
-    respond({Code, undefined});
-respond({_, _}=CodeAndPhrase) ->
-    Resource = get(resource),
-    EndTime = os:timestamp(),
-    respond(CodeAndPhrase, Resource, EndTime).
+-spec respond(webmachine_status_code:status_code_optional_phrase()) -> ok.
+respond(CodeAndPhrase) ->
+    case webmachine_status_code:status_code(CodeAndPhrase) of
+        Code when Code >= 400, Code < 600 ->
+            %% Reason is the paragraph under the heading, but we have
+            %% nothing to add in this case. The heading will already
+            %% be the status phrase.
+            Reason = "",
+            error_response(CodeAndPhrase, Reason);
+        304 ->
+            EndTime = erlang:monotonic_time(),
+            wrcall({remove_resp_header, "Content-Type"}),
+            case resource_call(generate_etag) of
+                undefined -> nop;
+                ETag -> wrcall({set_resp_header, "ETag",
+                                webmachine_util:quoted_string(ETag)})
+            end,
+            case resource_call(expires) of
+                undefined -> nop;
+                Exp ->
+                    wrcall({set_resp_header, "Expires",
+                            webmachine_util:rfc1123_date(Exp)})
+            end,
+            finish_response(CodeAndPhrase, EndTime);
+        _ ->
+            EndTime = erlang:monotonic_time(),
+            finish_response(CodeAndPhrase, EndTime)
+    end.
 
-respond({Code, _ReasonPhrase}=CodeAndPhrase, Resource, EndTime)
-  when Code >= 400, Code < 600 ->
-    error_response(CodeAndPhrase, Resource, EndTime);
-respond({304, _ReasonPhrase}=CodeAndPhrase, Resource, EndTime) ->
-    wrcall({remove_resp_header, "Content-Type"}),
-    case resource_call(generate_etag) of
-        undefined -> nop;
-        ETag -> wrcall({set_resp_header, "ETag", webmachine_util:quoted_string(ETag)})
-    end,
-    case resource_call(expires) of
-        undefined -> nop;
-        Exp ->
-            wrcall({set_resp_header, "Expires",
-                    webmachine_util:rfc1123_date(Exp)})
-    end,
-    finish_response(CodeAndPhrase, Resource, EndTime);
-respond(CodeAndPhrase, Resource, EndTime) ->
-    finish_response(CodeAndPhrase, Resource, EndTime).
-
-finish_response({Code, _}=CodeAndPhrase, Resource, EndTime) ->
-    put(code, Code),
+-spec finish_response(webmachine_status_code:status_code_optional_phrase(),
+                      integer()) -> ok.
+finish_response(CodeAndPhrase, EndTime) ->
+    put(code, CodeAndPhrase),
     wrcall({set_response_code, CodeAndPhrase}),
     resource_call(finish_request),
+    case wrcall(maybe_flush_req_body) of
+        false ->
+            %% mochiweb is going to close this socket (see
+            %% mochiweb_request:should_close) - let's help the client
+            %% expect it
+            wrcall({set_resp_header, "Connection", "close"});
+        true ->
+            ok
+    end,
     wrcall({send_response, CodeAndPhrase}),
     RMod = wrcall({get_metadata, 'resource_module'}),
     Notes = wrcall(notes),
@@ -103,29 +110,24 @@ finish_response({Code, _}=CodeAndPhrase, Resource, EndTime) ->
                                    end_time=EndTime,
                                    notes=Notes},
     spawn(fun() -> do_log(LogData) end),
+    Resource = get(resource),
     webmachine_resource:stop(Resource).
 
+-spec error_response(any()) -> ok.
 error_response(Reason) ->
-    error_response(500, Reason).
+    error_response({500, undefined}, Reason).
 
-error_response(Code, Reason) ->
-    Resource = get(resource),
-    EndTime = os:timestamp(),
-    error_response({Code, undefined}, Reason, Resource, EndTime).
-
-error_response({Code, _}=CodeAndPhrase, Resource, EndTime) ->
-    error_response({Code, _}=CodeAndPhrase,
-                   webmachine_error:reason(Code),
-                   Resource,
-                   EndTime).
-
-error_response({Code, _}=CodeAndPhrase, Reason, Resource, EndTime) ->
+-spec error_response(
+    webmachine_status_code:status_code_with_phrase(), any()) -> ok.
+error_response(CodeAndPhrase, Reason) ->
+    EndTime = erlang:monotonic_time(),
+    wrcall({add_note, error, Reason}),
     {ok, ErrorHandler} = application:get_env(webmachine, error_handler),
     {ErrorHTML, ReqState} = ErrorHandler:render_error(
-                              Code, {webmachine_request,get(reqstate)}, Reason),
+                              CodeAndPhrase, get(reqstate), Reason),
     put(reqstate, ReqState),
     wrcall({set_resp_body, encode_body(ErrorHTML)}),
-    finish_response(CodeAndPhrase, Resource, EndTime).
+    finish_response(CodeAndPhrase, EndTime).
 
 decision_test(Test,TestVal,TrueFlow,FalseFlow) ->
     case Test of
@@ -149,7 +151,7 @@ decision_test_fn(Test,TestFn,TrueFlow,FalseFlow) ->
     end.
 
 decision_flow(X, TestResult) when is_integer(X) ->
-    if X >= 500 -> error_response(X, TestResult);
+    if X >= 500 -> error_response({X, undefined}, TestResult);
        true -> respond(X)
     end;
 decision_flow(X, _TestResult) when is_atom(X) -> d(X).
@@ -445,11 +447,7 @@ decision(v3m16) ->
 %% DELETE enacted immediately?
 %% Also where DELETE is forced.
 decision(v3m20) ->
-    Result = resource_call(delete_resource),
-    %% DELETE may have body and TCP connection will be closed unless body is read.
-    %% See mochiweb_request:should_close.
-    maybe_flush_body_stream(),
-    decision_test(Result, true, v3m20b, 500);
+    decision_test(resource_call(delete_resource), true, v3m20b, 500);
 decision(v3m20b) ->
     decision_test(resource_call(delete_completed), true, v3o20, 202);
 %% "Server allows POST to missing resource?"
@@ -506,7 +504,7 @@ decision(v3n11) ->
                     case wrcall({get_resp_header, "Location"}) of
                         undefined ->
                             Reason = "Response had do_redirect but no Location",
-                            error_response(500, Reason);
+                            error_response(Reason);
                         _ ->
                             respond(303)
                     end;
@@ -787,13 +785,3 @@ compute_body_md5_stream(MD5, {Hunk, done}, Body) ->
     md5_final(md5_update(MD5, Hunk));
 compute_body_md5_stream(MD5, {Hunk, Next}, Body) ->
     compute_body_md5_stream(md5_update(MD5, Hunk), Next(), <<Body/binary, Hunk/binary>>).
-
-maybe_flush_body_stream() ->
-    maybe_flush_body_stream(wrcall({stream_req_body, 8192})).
-
-maybe_flush_body_stream(stream_conflict) ->
-    ok;
-maybe_flush_body_stream({_Hunk, done}) ->
-    ok;
-maybe_flush_body_stream({_Hunk, Next}) ->
-    maybe_flush_body_stream(Next()).

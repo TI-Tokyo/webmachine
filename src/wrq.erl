@@ -128,11 +128,9 @@ host_tokens(_RD = #wm_reqdata{host_tokens=HostT}) -> HostT. % list of strings
 -spec port(t()) -> inet:port_number().
 port(_RD = #wm_reqdata{port=Port}) -> Port.
 
--spec response_code(t()) -> non_neg_integer().
-response_code(#wm_reqdata{response_code={C,_ReasonPhrase}})
-  when is_integer(C) -> C;
-response_code(_RD = #wm_reqdata{response_code=C})
-  when is_integer(C) -> C.
+-spec response_code(t()) -> webmachine_status_code:status_code().
+response_code(#wm_reqdata{response_code=CodeAndPhrase}) ->
+    webmachine_status_code:status_code(CodeAndPhrase).
 
 -spec req_cookie(t()) -> [{string(), string()}].
 req_cookie(_RD = #wm_reqdata{req_cookie=C}) when is_list(C) -> C.
@@ -144,14 +142,13 @@ req_qs(_RD = #wm_reqdata{req_qs=QS}) when is_list(QS) -> QS.
 req_headers(_RD = #wm_reqdata{req_headers=ReqH}) -> ReqH.
 
 req_body(_RD = #wm_reqdata{wm_state=ReqState0,max_recv_body=MRB}) ->
-    Req = webmachine_request:new(ReqState0),
-    {ReqResp, ReqState} = webmachine_request:req_body(MRB, Req),
+    {ReqResp, ReqState} = webmachine_request:req_body(MRB, ReqState0),
     put(tmp_reqstate, ReqState),
     maybe_conflict_body(ReqResp).
 
 stream_req_body(_RD = #wm_reqdata{wm_state=ReqState0}, MaxHunk) ->
-    Req = webmachine_request:new(ReqState0),
-    {ReqResp, ReqState} = webmachine_request:stream_req_body(MaxHunk, Req),
+    {ReqResp, ReqState} =
+        webmachine_request:stream_req_body(MaxHunk, ReqState0),
     put(tmp_reqstate, ReqState),
     maybe_conflict_body(ReqResp).
 
@@ -172,7 +169,7 @@ maybe_conflict_body(BodyResponse) ->
 -spec resp_redirect(t()) -> boolean().
 resp_redirect(#wm_reqdata{resp_redirect=R}) -> R.
 
--spec resp_headers(t()) -> webmachine_headers:headers().
+-spec resp_headers(t()) -> webmachine:headers().
 resp_headers(_RD = #wm_reqdata{resp_headers=RespH}) -> RespH. % mochiheaders
 
 -spec resp_body(t()) -> webmachine:response_body().
@@ -211,8 +208,13 @@ set_req_body(Body, RD) -> RD#wm_reqdata{req_body=Body}.
 
 set_resp_body(Body, RD) -> RD#wm_reqdata{resp_body=Body}.
 
-set_response_code({Code, _ReasonPhrase}=CodeAndReason, RD) when is_integer(Code) ->
-    RD#wm_reqdata{response_code=CodeAndReason};
+-spec set_response_code(
+        webmachine_status_code:status_code_optional_phrase(),
+        t()) -> t().
+set_response_code({Code, ReasonPhrase}=CodeAndPhrase, RD)
+  when is_integer(Code),
+       (ReasonPhrase == undefined orelse is_list(ReasonPhrase)) ->
+    RD#wm_reqdata{response_code=CodeAndPhrase};
 set_response_code(Code, RD) when is_integer(Code) ->
     RD#wm_reqdata{response_code=Code}.
 

@@ -45,12 +45,6 @@ md5(Bin) ->
     crypto:md5(Bin).
 -endif.
 
-%% Suppress Erlang/OTP 21 warnings about the new method to retrieve
-%% stacktraces.
--ifdef(OTP_RELEASE).
--compile({nowarn_deprecated_function, [{erlang, get_stacktrace, 0}]}).
--endif.
-
 -define(HTTP_1_0_METHODS, ['GET', 'POST', 'HEAD']).
 -define(HTTP_1_1_METHODS, ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'TRACE',
                            'CONNECT', 'OPTIONS']).
@@ -307,6 +301,7 @@ core_tests() ->
      fun not_found_m7/0,
      fun created_p11_post/0,
      fun created_p11_put/0,
+     fun expect_100_continue/0,
      fun conflict_p3/0,
      fun conflict_o14/0,
      fun gone_m5/0,
@@ -318,7 +313,11 @@ core_tests() ->
      fun writer_callback/0,
      fun head_length_access_for_cs/0,
      fun get_known_length_for_cs/0,
-     fun get_for_range_capable_stream/0
+     fun get_for_range_capable_stream/0,
+     fun extension_status_code/0,
+     fun extension_status_code_with_phrase/0,
+     fun extension_status_code_default_phrase/0,
+     fun code_specific_error_bodies/0
      % known_failure -- fun stream_content_md5/0
     ].
 
@@ -1050,6 +1049,45 @@ created_p11_put() ->
     ?assertEqual(ExpectedDecisionTrace, get_decision_ids()),
     ok.
 
+%% Expect: 100-continue should get 100 Continue response
+expect_100_continue() ->
+    put_setting(allowed_methods, ?DEFAULT_ALLOWED_METHODS),
+    put_setting(resource_exists, false),
+    ContentType = "text/plain",
+    Content = "Hello, expect_100_continue!",
+    ContentType = "text/plain",
+    put_setting(content_types_accepted, [{ContentType, accept_text}]),
+
+    %% Expect header should be case insensitive. This capitalizes a
+    %% random letter. All-lower case is never tested, because it seems
+    %% unlikely that an implementation would handle any random capital
+    %% without handling no capitals, and the implementation not
+    %% handling any capitals was the bug that caused this test to be
+    %% written.
+    ContinueLower = "continue",
+    {ContinueBefore, [ToCap|ContinueAfter]} =
+        lists:split(rand:uniform(length(ContinueLower))-1, ContinueLower),
+    ContinueTest = ContinueBefore ++ [ToCap-32 | ContinueAfter],
+
+    Ctx = get_context(),
+    Port = wm_integration_test_util:get_port(Ctx),
+    Url = wm_integration_test_util:url(Ctx, "excont"),
+    ExpReq = ["PUT ", Url, " HTTP/1.1\r\n",
+                             "Host: http://localhost:", integer_to_list(Port),
+                             "\r\nContent-type: ", ContentType,
+                             "\r\nContent-length: ",
+                             integer_to_list(length(Content)),
+                             "\r\nExpect: 100-", ContinueTest,
+                             "\r\n\r\n",
+                             Content],
+
+    {ok, Sock} = gen_tcp:connect("localhost", Port, [binary, {active, false}]),
+    ok = gen_tcp:send(Sock, ExpReq),
+    ?assertMatch({ok, <<"HTTP/1.1 100 Continue", _/binary>>},
+                 gen_tcp:recv(Sock, 0, 2000)),
+    ok = gen_tcp:close(Sock),
+    ok.
+
 %% 409 result via P3 (must be a PUT)
 conflict_p3() ->
     put_setting(allowed_methods, ?DEFAULT_ALLOWED_METHODS),
@@ -1264,6 +1302,77 @@ range_response(ReqData, Context) ->
                   {Result, done}
           end,
     {{stream, Size, Fun}, ReqData, Context}.
+
+%% Can we use supported codes from outside RFC 2616?
+extension_status_code() ->
+    put_setting(service_available, {halt, 418}),
+    {ok, {Status, _Headers, Body}} =
+        httpc:request(get, {url("foo"), []}, [], []),
+    ?assertMatch({"HTTP/1.1", 418, "I'm a teapot"}, Status),
+    %% did the error handler render the phrase too?
+    ?assertMatch({match, _}, re:run(Body, "418 I'm a teapot")),
+    ok.
+
+%% Can we get status+phrase for a code not defined in RFC 2616?
+extension_status_code_with_phrase() ->
+    put_setting(service_available, {halt, {498, "Webmachine Code Test"}}),
+    {ok, {Status, _Headers, Body}} =
+        httpc:request(get, {url("foo"), []}, [], []),
+    ?assertMatch({"HTTP/1.1", 498, "Webmachine Code Test"}, Status),
+    %% did the error handler render the phrase too?
+    ?assertMatch({match, _}, re:run(Body, "498 Webmachine Code Test")),
+    ok.
+
+%% Do we get a class-appropriate phrase for a status code not defined
+%% in RFC 2616?
+extension_status_code_default_phrase() ->
+    put_setting(service_available, {halt, 498}),
+    {ok, {Status, _Headers2, Body}} =
+        httpc:request(get, {url("foo"), []}, [], []),
+    ?assertMatch({"HTTP/1.1", 498, "Bad Request"}, Status),
+    %% did the error handler render the phrase too?
+    ?assertMatch({match, _}, re:run(Body, "498 Bad Request")),
+    ok.
+
+%% Do we get the code-specific messages that webmachine_error_handler
+%% renders? Testing one of these would be enough, but let's be thorough.
+code_specific_error_bodies() ->
+    put_setting(allowed_methods, ?DEFAULT_ALLOWED_METHODS),
+    put_setting(resource_exists, false),
+    {ok, {Status404, _Headers404, Body404}} =
+        httpc:request(get, {url(), []}, [], []),
+    ?assertMatch({_, 404, "Object Not Found"}, Status404),
+    ?assertMatch({{match, _}, _},
+                 {re:run(Body404, "The requested document was not found"),
+                  Body404}),
+
+    put_setting(service_available, false),
+    {ok, {Status503, _Headers503, Body503}} =
+        httpc:request(get, {url(), []}, [], []),
+    ?assertMatch({_, 503, "Service Unavailable"}, Status503),
+    ?assertMatch({{match, _}, _},
+                 {re:run(Body503, "The server is currently unable to handle"),
+                  %% include Body so failure logs the mismatched data
+                  Body503}),
+
+    put_setting(service_available, true),
+    put_setting(known_methods, ['GET', 'HEAD', 'OPTIONS']),
+    {ok, {Status501, _Headers501, Body501}} =
+        httpc:request(delete, {url(), []}, [], []),
+    ?assertMatch({_, 501, "Not Implemented"}, Status501),
+    ?assertMatch({{match, _}, _},
+                 {re:run(Body501, "The server does not support the 'DELETE'"),
+                  Body501}),
+
+    put_setting(known_methods, bonk),
+    {ok, {Status500, _Headers500, Body500}} =
+        httpc:request(delete, {url(), []}, [], []),
+    ?assertMatch({_, 500, "Internal Server Error"}, Status500),
+    ?assertMatch({{match, _}, _},
+                 {re:run(Body500, "The server encountered an error while"),
+                  Body500}),
+    ok.
+
 
 %% 201 result via P11 from a POST with a streaming/chunked body and an MD5-sum
 %%
