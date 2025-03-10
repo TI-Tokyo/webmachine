@@ -1,8 +1,8 @@
 {"1.2.0",
-[{<<"mochiweb">>,{pkg,<<"mochiweb">>,<<"3.2.1">>},0}]}.
+[{<<"mochiweb">>,{pkg,<<"mochiweb">>,<<"3.2.2">>},0}]}.
 [
 {pkg_hash,[
- {<<"mochiweb">>, <<"FF287E1EC653A0828F226CD5A009D52BE74537DC3FC274B765525A77CE01F8EC">>}]},
+ {<<"mochiweb">>, <<"BB435384B3B9FD1F92F2F3FE652EA644432877A3E8A81ED6459CE951E0482AD3">>}]},
 {pkg_hash_ext,[
- {<<"mochiweb">>, <<"975466D335403A78CD58186636B8E960E3C84C4D9C1A85EB7FE53B6A5DD54DE7">>}]}
+ {<<"mochiweb">>, <<"4114E51F1B44C270B3242D91294FE174CE1ED989100E8B65A1FAB58E0CBA41D5">>}]}
 ].
