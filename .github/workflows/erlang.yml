@@ -19,8 +19,6 @@ jobs:
         otp:
           - "26"
           - "25"
-          - "24"
-          - "22"
 
     container:
       image: erlang:${{ matrix.otp }}
